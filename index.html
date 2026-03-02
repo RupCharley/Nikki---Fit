@@ -1321,7 +1321,7 @@
     <div class="log-row">
       <div>
         <label>Date</label>
-        <input type="date" id="log-date">
+        <input type="date" id="log-date" onchange="loadLogDate(this.value)">
       </div>
       <div>
         <label>Weight (kg)</label>
@@ -1493,12 +1493,13 @@ const REST_MESSAGES = {
 };
 
 // Storage keys
-const STORE_LOG = 'wf_log';
-const STORE_FOOD = 'wf_food';
-const STORE_WEIGHTS = 'wf_weights';
-const STORE_MISSED = 'wf_missed';
-const STORE_DONE = 'wf_done';
-const STORE_BASELINE = 'wf_baseline'; // persistent per-exercise weight baselines
+const STORE_LOG = 'nikki_log';
+const STORE_FOOD = 'nikki_food';
+const STORE_WEIGHTS = 'nikki_weights';
+const STORE_MISSED = 'nikki_missed';
+const STORE_DONE = 'nikki_done';
+const STORE_AWAY_DONE = 'nikki_away_done';
+const STORE_BASELINE = 'nikki_baseline'; // persistent per-exercise weight baselines
 
 function getData(key) { try { return JSON.parse(localStorage.getItem(key)) || []; } catch(e) { return []; } }
 function setData(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
@@ -1572,11 +1573,12 @@ function renderAwaySession() {
       </div>
       ${exHTML}
       <div style="font-family:'Courier New',Courier,monospace;font-size:11px;color:var(--muted);margin-top:8px;text-align:center">All bodyweight — hotel room, garden, anywhere</div>
+      <button onclick="markAwayDone()" style="width:100%;margin-top:14px;background:var(--accent);color:white;border:none;border-radius:10px;padding:12px;font-family:'Courier New',Courier,monospace;font-size:12px;cursor:pointer;touch-action:manipulation">✓ Done — No Gym session complete</button>
     </div>`;
 }
 
 
-const STORE_HEALTH = 'wf_health';
+const STORE_HEALTH = 'nikki_health';
 
 
 function exportToCSV() {
@@ -1673,7 +1675,7 @@ function renderHealthMetrics() {
 }
 
 
-const STORE_SWAPS = 'wf_swaps';
+const STORE_SWAPS = 'nikki_swaps';
 
 function getSwaps() {
   try { return JSON.parse(localStorage.getItem(STORE_SWAPS)) || {}; } catch(e) { return {}; }
@@ -1739,6 +1741,7 @@ function getTodaySession() {
 
 function isMissed(dateStr) { return getData(STORE_MISSED).includes(dateStr); }
 function isDone(dateStr) { return getData(STORE_DONE).includes(dateStr); }
+function isAwayDone(dateStr) { return getData(STORE_AWAY_DONE).includes(dateStr); }
 
 function markSessionMissed() {
   const ds = getDateStr();
@@ -1755,9 +1758,60 @@ function markSessionDone() {
   const done = getData(STORE_DONE);
   if (!done.includes(ds)) { done.push(ds); setData(STORE_DONE, done); }
   setData(STORE_MISSED, getData(STORE_MISSED).filter(d=>d!==ds));
+  setData(STORE_AWAY_DONE, getData(STORE_AWAY_DONE).filter(d=>d!==ds));
   renderToday();
   if (schedView === 'week') renderWeekView();
 }
+
+function markAwayDone() {
+  const ds = getDateStr();
+  const away = getData(STORE_AWAY_DONE);
+  if (!away.includes(ds)) { away.push(ds); setData(STORE_AWAY_DONE, away); }
+  setData(STORE_MISSED, getData(STORE_MISSED).filter(d => d !== ds));
+  setData(STORE_DONE,   getData(STORE_DONE).filter(d => d !== ds));
+  renderToday();
+  if (schedView === 'week') renderWeekView(); else renderMonthView();
+}
+
+function markAwayDoneForDate(dateStr) {
+  const away = getData(STORE_AWAY_DONE);
+  if (!away.includes(dateStr)) { away.push(dateStr); setData(STORE_AWAY_DONE, away); }
+  setData(STORE_MISSED, getData(STORE_MISSED).filter(d => d !== dateStr));
+  setData(STORE_DONE,   getData(STORE_DONE).filter(d => d !== dateStr));
+  closeModal();
+  if (schedView === 'week') renderWeekView(); else renderMonthView();
+  if (dateStr === getDateStr()) renderToday();
+}
+
+
+function markDoneForDate(dateStr) {
+  const done = getData(STORE_DONE);
+  if (!done.includes(dateStr)) { done.push(dateStr); setData(STORE_DONE, done); }
+  setData(STORE_MISSED, getData(STORE_MISSED).filter(d => d !== dateStr));
+  setData(STORE_AWAY_DONE, getData(STORE_AWAY_DONE).filter(d => d !== dateStr));
+  closeModal();
+  if (schedView === 'week') renderWeekView(); else renderMonthView();
+  if (dateStr === getDateStr()) renderToday();
+}
+
+function markMissedForDate(dateStr) {
+  const missed = getData(STORE_MISSED);
+  if (!missed.includes(dateStr)) { missed.push(dateStr); setData(STORE_MISSED, missed); }
+  setData(STORE_DONE, getData(STORE_DONE).filter(d => d !== dateStr));
+  setData(STORE_AWAY_DONE, getData(STORE_AWAY_DONE).filter(d => d !== dateStr));
+  closeModal();
+  if (schedView === 'week') renderWeekView(); else renderMonthView();
+  if (dateStr === getDateStr()) renderToday();
+}
+
+function undoMissedForDate(dateStr) {
+  setData(STORE_MISSED, getData(STORE_MISSED).filter(d => d !== dateStr));
+  setData(STORE_AWAY_DONE, getData(STORE_AWAY_DONE).filter(d => d !== dateStr));
+  closeModal();
+  if (schedView === 'week') renderWeekView(); else renderMonthView();
+  if (dateStr === getDateStr()) renderToday();
+}
+
 
 function undoMissed() {
   const ds = getDateStr();
@@ -1789,13 +1843,17 @@ function updateCountdown() {
 }
 
 function renderToday() {
-  const day = getTodaySession();
-  const container = document.getElementById('session-container');
+  const dow = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const dayName = dow[new Date().getDay()];
   const SESSIONS_NOW = getSessions();
-  const sessionKey = SESSIONS_NOW[day];
+  const sessionKey = SESSIONS_NOW[dayName] || null;
+  const todayStr = new Date().toISOString().split('T')[0];
+  const swaps = getSwaps();
+  const day = swaps[todayStr] ? swaps[todayStr].session : (sessionKey || dayName);
+  const container = document.getElementById('session-container');
   const ds = getDateStr();
 
-  if (!sessionKey) {
+  if (!sessionKey && !swaps[todayStr]) {
     const r = REST_MESSAGES[day] || { icon:'😴', title:'Rest Day', msg:'Enjoy your rest.' };
     container.innerHTML = `
       <div class="card">
@@ -2210,6 +2268,19 @@ function logMeasurement() {
   renderHealthMetrics();
 }
 
+function loadLogDate(date) {
+  if (!date) return;
+  const log    = getData(STORE_LOG);
+  const health = getData(STORE_HEALTH);
+  const entry  = log.find(l => l.date === date);
+  const hEntry = health.find(h => h.date === date);
+  document.getElementById('log-weight').value = entry  ? entry.weight : '';
+  document.getElementById('log-waist').value  = entry  && entry.waist ? entry.waist : '';
+  document.getElementById('log-bp').value     = hEntry && hEntry.bp   ? hEntry.bp   : '';
+  document.getElementById('log-bf').value     = hEntry && hEntry.bf != null ? hEntry.bf : '';
+}
+
+
 function renderProgress() {
   const log = getData(STORE_LOG);
   const latest = log.length ? log[log.length-1] : null;
@@ -2269,36 +2340,59 @@ function renderProgress() {
   const healthMap = {};
   health.forEach(h => healthMap[h.date] = h);
 
-  // Table header
-  histEl.innerHTML = `
-    <div style="overflow-x:auto">
-    <table style="width:100%;border-collapse:collapse;font-family:'Courier New',Courier,monospace;font-size:12px">
-      <thead>
-        <tr style="color:var(--muted);border-bottom:1px solid var(--border)">
-          <th style="text-align:left;padding:6px 4px;min-width:70px">Date</th>
-          <th style="text-align:right;padding:6px 4px;min-width:65px">Weight</th>
-          <th style="text-align:right;padding:6px 4px;min-width:55px">Waist</th>
-          <th style="text-align:right;padding:6px 4px;min-width:55px">BP</th>
-          <th style="text-align:right;padding:6px 4px;min-width:50px">Fat%</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${[...log].reverse().map(l => {
-          const h = healthMap[l.date] || {};
-          const d = new Date(l.date);
-          const dateStr = d.toLocaleDateString('en-GB',{day:'numeric',month:'short'});
-          return `<tr style="border-bottom:1px solid rgba(42,42,58,0.5)">
-            <td style="padding:7px 4px;color:var(--muted)">${dateStr}</td>
-            <td style="padding:7px 4px;text-align:right;color:var(--text)">${l.weight.toFixed(1)}</td>
-            <td style="padding:7px 4px;text-align:right;color:var(--muted)">${l.waist ? l.waist+'cm' : '—'}</td>
-            <td style="padding:7px 4px;text-align:right;color:var(--muted)">${h.bp || '—'}</td>
-            <td style="padding:7px 4px;text-align:right;color:var(--muted)">${h.bf != null ? h.bf.toFixed(1)+'%' : '—'}</td>
-          </tr>`;
-        }).join('')}
-      </tbody>
-    </table>
-    </div>
-    <button onclick="exportToCSV()" style="width:100%;margin-top:14px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-family:'Courier New',Courier,monospace;font-size:12px;padding:11px;cursor:pointer;touch-action:manipulation">📥 Export All Data</button>`;
+  const showAll = window._logShowAll || false;
+  const reversed = [...log].reverse();
+  const displayed = showAll ? reversed : reversed.slice(0, 5);
+  const hasMore = reversed.length > 5;
+
+  function cellCol(cur, prev, lowerIsBetter) {
+    if (prev == null || cur == null) return 'var(--text)';
+    if (cur === prev) return 'var(--text)';
+    return (lowerIsBetter ? cur < prev : cur > prev) ? 'var(--success)' : '#c9a84c';
+  }
+
+  const rows = displayed.map((l, i) => {
+    const prev = displayed[i + 1] || null;
+    const h  = healthMap[l.date] || {};
+    const ph = prev ? (healthMap[prev.date] || {}) : {};
+    const d  = new Date(l.date);
+    const ds = d.toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+    const wCol  = cellCol(l.weight, prev ? prev.weight : null, true);
+    const waCol = cellCol(l.waist,  prev ? prev.waist  : null, true);
+    const bfCol = cellCol(h.bf,     ph.bf != null ? ph.bf : null, true);
+    let bpCol = 'var(--text)';
+    if (h.bp && ph.bp && h.bp.includes('/') && ph.bp.includes('/')) {
+      bpCol = cellCol(parseInt(h.bp.split('/')[0]), parseInt(ph.bp.split('/')[0]), true);
+    }
+    return '<tr style="border-bottom:1px solid rgba(42,42,58,0.5)">'
+      + '<td style="padding:7px 4px;color:var(--muted)">' + ds + '</td>'
+      + '<td style="padding:7px 4px;text-align:right;color:' + wCol  + '">' + l.weight.toFixed(1) + '</td>'
+      + '<td style="padding:7px 4px;text-align:right;color:' + waCol + '">' + (l.waist ? l.waist + 'cm' : '—') + '</td>'
+      + '<td style="padding:7px 4px;text-align:right;color:' + bpCol + '">' + (h.bp || '—') + '</td>'
+      + '<td style="padding:7px 4px;text-align:right;color:' + bfCol + '">' + (h.bf != null ? h.bf.toFixed(1) + '%' : '—') + '</td>'
+      + '</tr>';
+  }).join('');
+
+  const toggleBtn = hasMore
+    ? '<button onclick="window._logShowAll=!window._logShowAll;renderProgress();" style="width:100%;margin-top:10px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--muted);font-family:\'Courier New\',Courier,monospace;font-size:11px;padding:9px;cursor:pointer;touch-action:manipulation">'
+      + (showAll ? '▲ Show last 5 only' : '▼ Show all ' + reversed.length + ' entries')
+      + '</button>'
+    : '';
+
+  histEl.innerHTML =
+    '<div style="overflow-x:auto">'
+    + '<table style="width:100%;border-collapse:collapse;font-family:\'Courier New\',Courier,monospace;font-size:12px">'
+    + '<thead><tr style="color:var(--muted);border-bottom:1px solid var(--border)">'
+    + '<th style="text-align:left;padding:6px 4px;min-width:70px">Date</th>'
+    + '<th style="text-align:right;padding:6px 4px;min-width:65px">Weight</th>'
+    + '<th style="text-align:right;padding:6px 4px;min-width:55px">Waist</th>'
+    + '<th style="text-align:right;padding:6px 4px;min-width:55px">BP</th>'
+    + '<th style="text-align:right;padding:6px 4px;min-width:50px">Fat%</th>'
+    + '</tr></thead>'
+    + '<tbody>' + rows + '</tbody>'
+    + '</table></div>'
+    + toggleBtn
+    + '<button onclick="exportToCSV()" style="width:100%;margin-top:10px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-family:\'Courier New\',Courier,monospace;font-size:12px;padding:11px;cursor:pointer;touch-action:manipulation">📥 Export All Data</button>';
 }
 
 function drawMiniChart(canvasId, points, color, targetVal, startVal, unit, gridVals) {
@@ -2602,6 +2696,7 @@ function renderWeekView() {
     const dateStr = d.toISOString().split('T')[0];
     const wasMissed = isPast && isMissed(dateStr);
     const wasDone = isDone(dateStr);
+    const wasAwayDone = isAwayDone(dateStr);
     const isSessionDay = info.type === 'A' || info.type === 'B' || info.type === 'C';
     const isC = info.type === 'C';
     // Row background: green tint for Session C, green glow when C is done
@@ -2612,6 +2707,7 @@ function renderWeekView() {
       : '';
     let statusBadge = '';
     if (wasMissed) statusBadge = `<span style="font-family:'Courier New',Courier,monospace;font-size:9px;padding:2px 7px;border-radius:10px;background:rgba(201,76,76,0.15);color:var(--danger);border:1px solid rgba(201,76,76,0.3);white-space:nowrap">MISSED</span>`;
+    else if (wasAwayDone) statusBadge = `<span style="font-size:28px;line-height:1">🔵</span>`;
     else if (wasDone) statusBadge = `<span style="font-size:28px;line-height:1">✅</span>`;
 
     html += `
@@ -2691,6 +2787,15 @@ function dayRowClick(dateStr, type) {
   const fullDay = dayNames[date.getDay()];
   const fmt = `${fullDay} ${date.getDate()} ${MONTH_NAMES[date.getMonth()]}`;
 
+  const today = new Date(); today.setHours(12,0,0,0);
+  const isPast = date < today;
+  const isToday = dateStr === getDateStr();
+  const doneDates = getData(STORE_DONE);
+  const missedDates = getData(STORE_MISSED);
+  const alreadyDone = doneDates.includes(dateStr);
+  const alreadyAway = getData(STORE_AWAY_DONE).includes(dateStr);
+  const alreadyMissed = missedDates.includes(dateStr);
+
   let content = '';
 
   if (type === 'A' || type === 'B' || type === 'C') {
@@ -2726,7 +2831,37 @@ function dayRowClick(dateStr, type) {
         <div style="font-size:12px;color:var(--muted);line-height:1.6">${s.cardio.getDesc ? s.cardio.getDesc(getCurrentWeek()) : s.cardio.desc}</div>
       </div>
       <div style="font-family:'Courier New',Courier,monospace;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">Exercises</div>
-      ${exHTML}`;
+      ${exHTML}
+      ${(isPast || isToday) ? `
+      <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+        ${alreadyAway ? `
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+            <span style="font-size:18px">🔵</span>
+            <span style="font-family:'Courier New',Courier,monospace;font-size:11px;color:var(--accent)">NO GYM SESSION DONE</span>
+          </div>
+          <button onclick="markDoneForDate('${dateStr}')" style="width:100%;background:var(--success);color:white;border:none;border-radius:10px;padding:11px;font-family:'Courier New',Courier,monospace;font-size:11px;cursor:pointer;touch-action:manipulation;margin-bottom:8px">✓ Mark as gym session instead</button>
+          <button onclick="undoMissedForDate('${dateStr}')" style="width:100%;background:var(--surface2);color:var(--muted);border:1px solid var(--border);border-radius:10px;padding:11px;font-family:'Courier New',Courier,monospace;font-size:11px;cursor:pointer;touch-action:manipulation">↩ Undo</button>
+        ` : alreadyDone ? `
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+            <span style="font-size:18px">✅</span>
+            <span style="font-family:'Courier New',Courier,monospace;font-size:11px;color:var(--success)">SESSION COMPLETED</span>
+          </div>
+          <button onclick="markMissedForDate('${dateStr}')" style="width:100%;background:var(--surface2);color:var(--muted);border:1px solid var(--border);border-radius:10px;padding:11px;font-family:'Courier New',Courier,monospace;font-size:11px;cursor:pointer;touch-action:manipulation">↩ Undo — mark as not done</button>
+        ` : alreadyMissed ? `
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+            <span style="font-size:18px">❌</span>
+            <span style="font-family:'Courier New',Courier,monospace;font-size:11px;color:var(--danger)">SESSION MISSED</span>
+          </div>
+          <button onclick="markDoneForDate('${dateStr}')" style="width:100%;background:var(--success);color:white;border:none;border-radius:10px;padding:11px;font-family:'Courier New',Courier,monospace;font-size:11px;cursor:pointer;touch-action:manipulation;margin-bottom:8px">✓ Actually did it — mark complete</button>
+          <button onclick="undoMissedForDate('${dateStr}')" style="width:100%;background:var(--surface2);color:var(--muted);border:1px solid var(--border);border-radius:10px;padding:11px;font-family:'Courier New',Courier,monospace;font-size:11px;cursor:pointer;touch-action:manipulation">↩ Undo — remove missed flag</button>
+        ` : `
+          <div style="display:flex;gap:8px">
+            <button onclick="markDoneForDate('${dateStr}')" style="flex:1;background:var(--success);color:white;border:none;border-radius:10px;padding:11px;font-family:'Courier New',Courier,monospace;font-size:11px;cursor:pointer;touch-action:manipulation">✓ Done</button>
+            <button onclick="markAwayDoneForDate('${dateStr}')" style="flex:1;background:var(--accent);color:white;border:none;border-radius:10px;padding:11px;font-family:'Courier New',Courier,monospace;font-size:11px;cursor:pointer;touch-action:manipulation">🔵 No Gym</button>
+            <button onclick="markMissedForDate('${dateStr}')" style="flex:1;background:var(--surface2);color:var(--muted);border:1px solid var(--border);border-radius:10px;padding:11px;font-family:'Courier New',Courier,monospace;font-size:11px;cursor:pointer;touch-action:manipulation">✗ Missed</button>
+          </div>
+        `}
+      </div>` : ''}`;
   } else {
     const r = REST_MESSAGES[dow] || { icon:'😴', title:'Rest Day', msg:'Full recovery day.' };
     // Check if this date itself has a swap (it's the rest day that was swapped)
@@ -2754,9 +2889,9 @@ function dayRowClick(dateStr, type) {
         <div style="font-size:14px;color:var(--muted);line-height:1.7">${r.msg}</div>
         ${swapMsg}
       </div>
-      <button onclick="${swapTarget}" style="width:100%;background:${isAnySwap ? 'var(--surface2)' : 'var(--accent)'};color:${isAnySwap ? 'var(--muted)' : 'white'};border:1px solid ${isAnySwap ? 'var(--border)' : 'var(--accent)'};border-radius:10px;padding:13px;font-family:'Courier New',Courier,monospace;font-size:12px;cursor:pointer;touch-action:manipulation;margin-top:4px">
+      ${(!isPast && !isToday) || isAnySwap ? `<button onclick="${swapTarget}" style="width:100%;background:${isAnySwap ? 'var(--surface2)' : 'var(--accent)'};color:${isAnySwap ? 'var(--muted)' : 'white'};border:1px solid ${isAnySwap ? 'var(--border)' : 'var(--accent)'};border-radius:10px;padding:13px;font-family:'Courier New',Courier,monospace;font-size:12px;cursor:pointer;touch-action:manipulation;margin-top:4px">
         ${btnLabel}
-      </button>`;
+      </button>` : ''}`;
   }
 
   document.getElementById('modal-date').textContent = fmt;
@@ -2794,8 +2929,9 @@ function renderMonthView() {
     const inProg = date >= START && date <= WEDDING;
 
     const dateStr2 = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-    const wasMissed = isMissed(dateStr2);
-    const wasDone   = isDone(dateStr2);
+    const wasMissed  = isMissed(dateStr2);
+    const wasDone    = isDone(dateStr2);
+    const wasAwayDone = isAwayDone(dateStr2);
 
     let cls = 'month-cell';
     if (isWedding) cls += ' wedding-day';
@@ -2809,7 +2945,7 @@ function renderMonthView() {
     if (isToday) cls += ' is-today';
     if (isPast && !isToday && !wasMissed && !wasDone) cls += ' past';
 
-    const tick = wasDone ? '<div style="font-size:16px;line-height:1;margin-top:1px">✅</div>' : '';
+    const tick = wasAwayDone ? '<div style="font-size:16px;line-height:1;margin-top:1px">🔵</div>' : wasDone ? '<div style="font-size:16px;line-height:1;margin-top:1px">✅</div>' : '';
     const lbl = isWedding
       ? '<div style="font-size:8px">💍</div>'
       : wasDone ? tick
@@ -2849,7 +2985,7 @@ function switchSchedView(view) {
 }
 
 // ── SETUP / SETTINGS ─────────────────────────────────────────────────
-const STORE_SETUP = 'wf_setup';
+const STORE_SETUP = 'nikki_setup';
 
 function getSetup() {
   try { return JSON.parse(localStorage.getItem(STORE_SETUP)) || {}; } catch(e) { return {}; }
@@ -2948,7 +3084,7 @@ function saveSettings() {
 // Check first launch — show setup if not completed
 
 function checkWeeklyReminder() {
-  const STORE_REMIND = 'wf_last_remind';
+  const STORE_REMIND = 'nikki_last_remind';
   const last = localStorage.getItem(STORE_REMIND);
   const now = new Date();
   const today = now.toISOString().split('T')[0];
@@ -3022,6 +3158,7 @@ document.addEventListener('DOMContentLoaded', function() {
   // Set default log date to today
   const todayStr = new Date().toISOString().split('T')[0];
   document.getElementById('log-date').value = todayStr;
+  loadLogDate(todayStr);
 });
 </script>
 
